@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - paths: example 
+  - paths: local
   - model: WizardLM70B
 
 pathology: appendicitis
@@ -21,8 +21,10 @@ seed: 2023
 local_logging: True
 run_descr:
 
+max_patients: 1
 first_patient:
 patient_list_path:
+run_id:
 
 order: pli
 diagnostic_criteria:
