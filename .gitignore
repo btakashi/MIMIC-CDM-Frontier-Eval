@@ -1,1 +1,9 @@
 __pycache__
+.env
+.envrc
+.env.local
+logs/
+configs/paths/*
+!configs/paths/example.yaml
+no_canonical_names.txt
+outputs/
