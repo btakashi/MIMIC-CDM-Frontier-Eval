@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - paths: example 
+  - paths: local
   - model: WizardLM70B
 
 pathology: appendicitis
@@ -21,8 +21,10 @@ seed: 2023
 local_logging: True
 run_descr:
 
+max_patients: 1
 first_patient:
 patient_list_path:
+run_id:
 
 order: pli
 diagnostic_criteria:
@@ -31,3 +33,15 @@ rr_name: RR
 diag_crit_writer_openai_api_key:
 confirm_diagnosis: False
 save_probabilities: False
+
+provider:
+azure_endpoint:
+azure_deployment:
+azure_api_key:
+azure_api_version: "2024-12-01-preview"
+aws_region: us-east-1
+bedrock_model_id:
+gcp_project:
+gcp_location: us-central1
+vertex_model_id:
+supports_stop: True

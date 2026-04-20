@@ -2,6 +2,9 @@ import logging
 from typing import List
 import string
 import copy
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="spacy")
 
 import pandas as pd
 import spacy
@@ -12,7 +15,10 @@ from thefuzz import process, fuzz
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from transformers import LlamaTokenizer, AutoTokenizer
-from exllamav2 import ExLlamaV2Tokenizer
+try:
+    from exllamav2 import ExLlamaV2Tokenizer
+except ImportError:
+    ExLlamaV2Tokenizer = None
 import tiktoken
 
 from tools.utils import FLUID_MAPPING, itemid_to_field
@@ -335,7 +341,7 @@ def calculate_num_tokens(tokenizer, inputs):
     num_tokens = 0
     for input in inputs:
         tokens = tokenizer.encode(input)
-        if isinstance(tokenizer, ExLlamaV2Tokenizer):
+        if ExLlamaV2Tokenizer is not None and isinstance(tokenizer, ExLlamaV2Tokenizer):
             num_tokens += tokens.shape[-1]
         else:
             num_tokens += len(tokens)
@@ -343,7 +349,7 @@ def calculate_num_tokens(tokenizer, inputs):
 
 
 def truncate_text(tokenizer, input, available_tokens):
-    if isinstance(tokenizer, ExLlamaV2Tokenizer):
+    if ExLlamaV2Tokenizer is not None and isinstance(tokenizer, ExLlamaV2Tokenizer):
         truncated_input_tokens = tokenizer.encode(input)[:, :available_tokens]
         input = tokenizer.decode(truncated_input_tokens)[0]
     elif isinstance(tokenizer, tiktoken.Encoding):

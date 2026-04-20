@@ -1,78 +1,65 @@
-# MIMIC Clinical Decision Making Framework
+# MIMIC Clinical Decision Making Framework - Hyperscaler AI Support
 
-For a video overview of the paper, checkout this talk I held for the BZKF: https://www.youtube.com/watch?v=sCDaUC16mHA
-
-## News
-
-**🔥 New Addition: Llama 3.3 has been added to the leaderboard! 🔥**
-
-**🔥 New Addition: Llama 3.1 has been added to the leaderboard! 🔥**
-
-**🔥 New Addition: OpenBio has been added to the leaderboard! 🔥**
-
-**🔥 New Addition: Llama 3 has been added to the leaderboard! 🔥**
 
 ## Overview
 
-This repository contains the code for running the clinical decision making task using the MIMIC CDM dataset.
+This is a fork of Paul Hager's [MIMIC Clinical Decision Making Framework](https://github.com/paulhager/MIMIC-Clinical-Decision-Making-Framework), adding support for running the MIMIC-CDM task using any of:
 
-The code to create the dataset is found at: https://github.com/paulhager/MIMIC-Clinical-Decision-Making-Dataset
+- Google Vertex AI (Gemini 2.5 Flash Lite, Gemini 3.1 Flash Lite Preview, Gemini 3.1 Pro Preview)
+- Microsoft Azure (Open AI's GPT 5.4)
+- Amazon Bedrock (Anthropic Claude Sonnet 4.6, Claude Opus 4.6)
 
-The dataset is based on the MIMIC-IV database. Access can be requested here: https://physionet.org/content/mimiciv/2.2/
+The original README for this repo is [here](README-original.md).
 
-A pre-processed version of the dataset is found here: https://physionet.org/content/mimic-iv-ext-cdm/
 
-Visit https://huggingface.co/spaces/MIMIC-CDM/leaderboard to check out the current leaderboard. I will update this as new models are released. If you would like a model to be tested and put on the board, please write me an email at paul (dot) hager (at) tum (dot) de.
+## Important!
 
-## MIMIC CDM
+In order to ensure compliance with [MIMIC data usage and licensing terms](https://physionet.org/about/licenses/physionet-credentialed-health-data-license-150/),
+in particular [regarding the use of LLMs](https://physionet.org/news/post/llm-responsible-use/), it is
+**absolutely necessary** to run tasks in an environment in which 1) zero data retention, 2) no use of data for model training, and 3) no human review can be ensured. At the time of writing (Apr 2026), this can be done in the following way for each provider:
 
-This code simulates a realistic clinical environment where an LLM is provided with the history of present illness of a patient and then tasked to gather information to come to a final diagnosis and treatment plan.
+- Microsoft Azure Foundry:
+  - Documentation: [Data, privacy, and security for Azure Direct Models in Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy)
+  - As noted in the documentation, asynchronous abuse monitoring results in 30-day data retention, violating ZDR. A request for modified abuse monitoring may be applied for [here](https://customervoice.microsoft.com/Pages/ResponsePage.aspx?id=v4j5cvGGr0GRqy180BHbR7en2Ais5pxKtso_Pz4b1_xUOE9MUTFMUlpBNk5IQlZWWkcyUEpWWEhGOCQlQCN0PWcu). Use of Azure Foundry should not be attempted without approval from Microsoft of modified abuse monitoring.
+  - As explained in the documentation, confirm that the value of `"ContentLogging"` in the approved subscription's Capabilities list is set to `"false"`.
+- Google Vertex AI:
+  - Documentation: [Vertex AI and zero data retention](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention)
+  - Apply for exclusion from Abuse Monitoring [here](https://forms.gle/mtjKKas8a82grYN6A). Upon acceptance, abuse monitoring may be suspended for the particular project id.
+  - Avoid the use of session resumption as noted in the documentation. Grounding with Google and Grounding with Google are obviously not used.
+  - Caching should also be disabled in accordance with the instructions [here](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention#enabling-disabling-caching).
+- Amazon Bedrock:
+  - Documentation:
+    - [Data protection](https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html)
+	- [Amazon Bedrock abuse detection](https://docs.aws.amazon.com/bedrock/latest/userguide/abuse-detection.html)
+	  - "There is no human review of, or access to, user inputs or model outputs."
+	  - "Amazon Bedrock does not store user input or model output and does not share these with third-party model providers."
+	- [Amazon Bedrock FAQs](https://aws.amazon.com/bedrock/faqs/)
+	  - Q: "Are user inputs and model outputs made available to third party model providers?"
+	  - A: "No. Users' inputs and model outputs are not shared with any model providers."
+	  - Q: "What security and compliance standards does Amazon Bedrock support?"
+	  - A: "With Amazon Bedrock, your content is not used to improve the base models and is not shared with any model providers."
+	  - Q: "Will AWS and third-party model providers use customer inputs to or outputs from Amazon Bedrock to train Amazon Nova, Amazon Titan or any third-party models?"
+	  - A: "No, AWS and the third-party model providers will not use any inputs to or outputs from Amazon Bedrock to train Amazon Nova, Amazon Titan, or any third-party models."
 
-To run the clinical decision making task, execute ```python run.py```. The arguments for this file are specified through config files managed by the hydra library and found under [configs](./configs/). The most important arguments are:
-- pathology: Specify one of appendicitis, cholecystitis, diverticulitis, pancreatitis
-- model: Specify which model to use. The model file also contains the different role tags
-- summarize: Automatically summarize the progress if we begin to reach the token limit
-
-These additional arguments change the way information is presented but did not help performance in my experience and so were not included in the paper:
-- include_ref_range: Include the reference ranges for lab results, as provided in the MIMIC database
-- bin_lab_results: Replace exact lab result values with the word "low", "normal", or "high", using the reference ranges
-- provide_diagnostic_criteria: Adds an extra tool where the model can consult diagnostic criteria if desired
-- diag_crit_writer_openai_api_key: OpenAI key to ask for new diagnostic criteria if they are missing from the datafile
-- include_tool_use_examples: Provides examples of how to use the tools
-
-## MIMIC CDM Full Information
-
-For the MIMIC-CDM-Full Information task, executed through ```python run_full_info.py```, all relevant information required for a diagnosis is provided upfront to the model and only a diagnosis is asked for. This allows us to also control what information we provide the model and explore many aspects of model performance such as robustness. The relevant arguments for this task are those from above and additionally:
-- prompt_template: Determines the system instruction or prompt used to ask for an answer. Possible values are specified in run_full_info.py
-- order: The order in which information is provided
-- abbreviated: Provide the original, abbreviated text
-- fewshot: Provides hand-crafted fewshot cases and diagnosis examples
-- save_probabilities: Saves the probabilities of the generation for downstream analysis
-- only_abnormal_labs: Provide only those lab results that are abnormal.
-- bin_lab_results_abnormal: If only abnormal labs are provided, also bin them
-
-## Other
-
-Housekeeping arguments are:
-- seed: The seed used for greedy decoding
-- local_logging: If logs should be saved locally
-- run_descr: An extra name to give to the run
-- first_patient: Start executing at a specific patient
-- patient_list_path: Run on only a select group of patients (given as a list of hadm_ids)
 
 ## Environment
 
-To setup the environment, create a new virtual environment of your choosing with python=3.10, export your CUDA_HOME path to whatever version CUDA you have (does not have to be 11.7.1 like in the example) and then install the libraries from requirements.txt:
+To setup the environment, create a new virtual environment of your choosing with python=3.10, install
+the libraries from requirements.txt, and install other dependencies:
 
 ```
-export CUDA_HOME=.../cuda/cuda_11.7.1
 pip install --no-deps -r requirements.txt
+python -m nltk.downloader punkt stopwords
 ```
 
+Note that in order to simplify running just the cloud models and minimize updates necessary for the
+older version of Python in the original repository, requirements have been simplified to only include
+requirements necessary to run the cloud models. For running new local models, please refer to the
+[original repository](https://github.com/paulhager/MIMIC-Clinical-Decision-Making-Framework).
 
 # Citation
 
-If you found this code and dataset useful, please cite our paper and dataset with:
+If you found this code and dataset useful, please cite the MIMIC-CDM paper and dataset with:
 
 Hager, P., Jungmann, F., Holland, R. et al. Evaluation and mitigation of the limitations of large language models in clinical decision-making. Nat Med (2024). https://doi.org/10.1038/s41591-024-03097-1
 ```

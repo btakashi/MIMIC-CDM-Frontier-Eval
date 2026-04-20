@@ -1,0 +1,25 @@
+# @package _global_
+defaults:
+  - _self_
+
+provider: azure
+model_name: gpt-5.4
+max_context_length: 128000
+exllama: False
+
+azure_endpoint: ${oc.env:AZURE_OPENAI_ENDPOINT,null}
+azure_deployment: ${oc.env:AZURE_OPENAI_DEPLOYMENT,null}
+azure_api_key: ${oc.env:AZURE_OPENAI_API_KEY,null}
+azure_api_version: "2024-12-01-preview"
+
+system_tag_start: "<|im_start|>system"
+system_tag_end: "<|im_end|>"
+
+user_tag_start: "<|im_start|>user"
+user_tag_end: "<|im_end|>"
+
+ai_tag_start: "<|im_start|>assistant"
+ai_tag_end: "<|im_end|>"
+
+stop_words: []
+supports_stop: false
