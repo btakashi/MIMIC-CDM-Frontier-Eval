@@ -1,5 +1,6 @@
 import os
 from os.path import join
+import pickle
 import random
 from datetime import datetime
 import time
@@ -13,12 +14,13 @@ from loguru import logger
 import langchain
 
 from dataset.utils import load_hadm_from_file
-from utils.logging import append_to_pickle_file
+from utils.logging import append_to_pickle_file, read_from_pickle_file
 from evaluators.appendicitis_evaluator import AppendicitisEvaluator
 from evaluators.cholecystitis_evaluator import CholecystitisEvaluator
 from evaluators.diverticulitis_evaluator import DiverticulitisEvaluator
 from evaluators.pancreatitis_evaluator import PancreatitisEvaluator
-from models.models import CustomLLM
+from models.api_models import CloudAPILLM
+from utils.scoring import score_run_dir
 from agents.agent import build_agent_executor_ZeroShot
 
 
@@ -48,7 +50,7 @@ def run(args: DictConfig):
 
     # Load patient data
     hadm_info_clean = load_hadm_from_file(
-        f"{args.pathology}_hadm_info_first_diag", base_mimic=args.base_mimic
+        f"{args.pathology}_hadm_info_first_diag", base_mimic=args.paths.base_mimic
     )
 
     tags = {
@@ -60,41 +62,66 @@ def run(args: DictConfig):
         "ai_tag_end": args.ai_tag_end,
     }
 
-    # Load desired model
-    llm = CustomLLM(
-        model_name=args.model_name,
-        openai_api_key=args.openai_api_key,
-        tags=tags,
-        max_context_length=args.max_context_length,
-        exllama=args.exllama,
-        seed=args.seed,
-        self_consistency=args.self_consistency,
-    )
-    llm.load_model(args.base_models)
+    if args.provider:
+        llm = CloudAPILLM(
+            model_name=args.model_name,
+            provider=args.provider,
+            tags=tags,
+            max_context_length=args.max_context_length,
+            seed=args.seed,
+            self_consistency=args.self_consistency,
+            azure_endpoint=args.azure_endpoint,
+            azure_deployment=args.azure_deployment,
+            azure_api_key=args.azure_api_key,
+            azure_api_version=args.azure_api_version,
+            aws_region=args.aws_region,
+            bedrock_model_id=args.bedrock_model_id,
+            gcp_project=args.gcp_project,
+            gcp_location=args.gcp_location,
+            vertex_model_id=args.vertex_model_id,
+            supports_stop=args.supports_stop,
+        )
+    else:
+        from models.models import CustomLLM
+        llm = CustomLLM(
+            model_name=args.model_name,
+            openai_api_key=args.openai_api_key,
+            tags=tags,
+            max_context_length=args.max_context_length,
+            exllama=args.exllama,
+            seed=args.seed,
+            self_consistency=args.self_consistency,
+        )
+    llm.load_model(args.paths.base_models)
 
-    date_time = datetime.fromtimestamp(time.time())
-    str_date = date_time.strftime("%d-%m-%Y_%H:%M:%S")
     args.model_name = args.model_name.replace("/", "_")
-    run_name = f"{args.pathology}_{args.agent}_{args.model_name}_{str_date}"
-    if args.fewshot:
-        run_name += "_FEWSHOT"
-    if args.include_ref_range:
+
+    if args.include_ref_range and args.bin_lab_results:
+        raise ValueError(
+            "Binning and printing reference ranges concurrently is not supported."
+        )
+
+    if args.run_id:
+        run_name = f"{args.run_id}_{args.pathology}_{args.agent}_{args.model_name}"
+    else:
+        date_time = datetime.fromtimestamp(time.time())
+        str_date = date_time.strftime("%d-%m-%Y_%H:%M:%S")
+        run_name = f"{args.pathology}_{args.agent}_{args.model_name}_{str_date}"
+        if args.fewshot:
+            run_name += "_FEWSHOT"
+        if args.include_ref_range:
+            run_name += "_REFRANGE"
         if args.bin_lab_results:
-            raise ValueError(
-                "Binning and printing reference ranges concurrently is not supported."
-            )
-        run_name += "_REFRANGE"
-    if args.bin_lab_results:
-        run_name += "_BIN"
-    if args.include_tool_use_examples:
-        run_name += "_TOOLEXAMPLES"
-    if args.provide_diagnostic_criteria:
-        run_name += "_DIAGCRIT"
-    if not args.summarize:
-        run_name += "_NOSUMMARY"
-    if args.run_descr:
-        run_name += str(args.run_descr)
-    run_dir = join(args.local_logging_dir, run_name)
+            run_name += "_BIN"
+        if args.include_tool_use_examples:
+            run_name += "_TOOLEXAMPLES"
+        if args.provide_diagnostic_criteria:
+            run_name += "_DIAGCRIT"
+        if not args.summarize:
+            run_name += "_NOSUMMARY"
+        if args.run_descr:
+            run_name += str(args.run_descr)
+    run_dir = join(args.paths.local_logging_dir, run_name)
 
     os.makedirs(run_dir, exist_ok=True)
 
@@ -108,14 +135,34 @@ def run(args: DictConfig):
     # Set langsmith project name
     # os.environ["LANGCHAIN_PROJECT"] = run_name
 
+    patient_list = hadm_info_clean.keys()
+    if args.patient_list_path:
+        with open(args.patient_list_path, "rb") as f:
+            patient_list = pickle.load(f)
+
+    completed_ids = set()
+    if os.path.exists(results_log_path):
+        for record in read_from_pickle_file(results_log_path):
+            completed_ids.update(record.keys())
+        logger.info(f"Resuming: found {len(completed_ids)} already-completed patients")
+
     # Predict for all patients
     first_patient_seen = False
-    for _id in hadm_info_clean.keys():
+    patients_processed = len(completed_ids)
+    for _id in patient_list:
         if args.first_patient and not first_patient_seen:
             if _id == args.first_patient:
                 first_patient_seen = True
             else:
                 continue
+
+        if _id in completed_ids:
+            logger.debug(f"Skipping already-completed patient: {_id}")
+            continue
+
+        if args.max_patients and patients_processed >= args.max_patients:
+            logger.info(f"Reached max_patients limit ({args.max_patients}). Stopping. Use max_patients=0 for unlimited.")
+            break
 
         logger.info(f"Processing patient: {_id}")
 
@@ -123,7 +170,7 @@ def run(args: DictConfig):
         agent_executor = build_agent_executor_ZeroShot(
             patient=hadm_info_clean[_id],
             llm=llm,
-            lab_test_mapping_path=args.lab_test_mapping_path,
+            lab_test_mapping_path=args.paths.lab_test_mapping_path,
             logfile=log_path,
             max_context_length=args.max_context_length,
             tags=tags,
@@ -140,6 +187,9 @@ def run(args: DictConfig):
             {"input": hadm_info_clean[_id]["Patient History"].strip()}
         )
         append_to_pickle_file(results_log_path, {_id: result})
+        patients_processed += 1
+
+    score_run_dir(run_dir, args.paths.base_mimic)
 
 
 if __name__ == "__main__":

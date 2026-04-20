@@ -19,12 +19,13 @@ from thefuzz import process
 
 from utils.nlp import calculate_num_tokens, truncate_text, create_lab_test_string
 from dataset.utils import load_hadm_from_file
-from utils.logging import append_to_pickle_file
+from utils.logging import append_to_pickle_file, read_from_pickle_file
 from evaluators.appendicitis_evaluator import AppendicitisEvaluator
 from evaluators.cholecystitis_evaluator import CholecystitisEvaluator
 from evaluators.diverticulitis_evaluator import DiverticulitisEvaluator
 from evaluators.pancreatitis_evaluator import PancreatitisEvaluator
-from models.models import CustomLLM
+from models.api_models import CloudAPILLM
+from utils.scoring import score_run_dir
 from agents.prompts import (
     FULL_INFO_TEMPLATE,
     FULL_INFO_TEMPLATE_SECTION,
@@ -104,16 +105,37 @@ def run(args: DictConfig):
     }
 
     # Load desired model
-    llm = CustomLLM(
-        model_name=args.model_name,
-        openai_api_key=args.openai_api_key,
-        tags=tags,
-        max_context_length=args.max_context_length,
-        exllama=args.exllama,
-        seed=args.seed,
-        self_consistency=args.self_consistency,
-    )
-    llm.load_model(args.base_models)
+    if args.provider:
+        llm = CloudAPILLM(
+            model_name=args.model_name,
+            provider=args.provider,
+            tags=tags,
+            max_context_length=args.max_context_length,
+            seed=args.seed,
+            self_consistency=args.self_consistency,
+            azure_endpoint=args.azure_endpoint,
+            azure_deployment=args.azure_deployment,
+            azure_api_key=args.azure_api_key,
+            azure_api_version=args.azure_api_version,
+            aws_region=args.aws_region,
+            bedrock_model_id=args.bedrock_model_id,
+            gcp_project=args.gcp_project,
+            gcp_location=args.gcp_location,
+            vertex_model_id=args.vertex_model_id,
+            supports_stop=args.supports_stop,
+        )
+    else:
+        from models.models import CustomLLM
+        llm = CustomLLM(
+            model_name=args.model_name,
+            openai_api_key=args.openai_api_key,
+            tags=tags,
+            max_context_length=args.max_context_length,
+            exllama=args.exllama,
+            seed=args.seed,
+            self_consistency=args.self_consistency,
+        )
+    llm.load_model(args.paths.base_models)
 
     if args.confirm_diagnosis:
         diag_crit_writer = CustomLLM(
@@ -124,7 +146,7 @@ def run(args: DictConfig):
             exllama=False,
             seed=2023,
         )
-        diag_crit_writer.load_model(args.base_models)
+        diag_crit_writer.load_model(args.paths.base_models)
 
     # Interpret desired prompt
     if args.prompt_template == "NOSYSTEM":
@@ -189,49 +211,55 @@ def run(args: DictConfig):
 
     chain = LLMChain(llm=llm, prompt=prompt)
 
-    date_time = datetime.fromtimestamp(time.time())
-    str_date = date_time.strftime("%d-%m-%Y_%H:%M:%S")
     args.model_name = args.model_name.replace("/", "_")
-    run_name = f"{args.pathology}_{args.model_name}_{str_date}_FULL_INFO"
 
-    # Create run_name string
-    if args.order:
-        run_name += f"_{args.order.upper()}"
+    if args.include_ref_range and args.bin_lab_results:
+        raise ValueError(
+            "Binning and printing reference ranges concurrently is not supported."
+        )
+
+    if args.run_id:
+        order_str = args.order.upper() if args.order else "H"
+        diag_str = args.diagnostic_criteria.upper() if args.diagnostic_criteria else "N"
+        run_name = f"{args.run_id}_{args.pathology}_{args.model_name}_FULL_INFO_{order_str}_{diag_str}_{args.prompt_template}"
     else:
-        run_name += "_H"
-    if args.diagnostic_criteria:
-        run_name += f"_{args.diagnostic_criteria.upper()}"
-    else:
-        run_name += "_N"
-    if args.fewshot:
-        run_name += "_FEWSHOT"
-    if args.include_ref_range:
+        date_time = datetime.fromtimestamp(time.time())
+        str_date = date_time.strftime("%d-%m-%Y_%H:%M:%S")
+        run_name = f"{args.pathology}_{args.model_name}_{str_date}_FULL_INFO"
+
+        if args.order:
+            run_name += f"_{args.order.upper()}"
+        else:
+            run_name += "_H"
+        if args.diagnostic_criteria:
+            run_name += f"_{args.diagnostic_criteria.upper()}"
+        else:
+            run_name += "_N"
+        if args.fewshot:
+            run_name += "_FEWSHOT"
+        if args.include_ref_range:
+            run_name += "_REFRANGE"
+        if args.only_abnormal_labs:
+            run_name += "_ONLYABNORMAL"
         if args.bin_lab_results:
-            raise ValueError(
-                "Binning and printing reference ranges concurrently is not supported."
-            )
-        run_name += "_REFRANGE"
-    if args.only_abnormal_labs:
-        run_name += "_ONLYABNORMAL"
-    if args.bin_lab_results:
-        run_name += "_BIN"
-    if args.bin_lab_results_abnormal:
-        run_name += "_BINABNORMAL"
-    if not args.summarize:
-        run_name += "_NOSUMMARY"
-    if args.confirm_diagnosis:
-        run_name += "_CONFIRM"
-    if not args.abbreviated:
-        run_name += "_NOABBR"
-    if args.self_consistency:
-        run_name += "_SELFCONSISTENCY"
-    if prompt_template != FULL_INFO_TEMPLATE:
-        run_name += f"_{args.prompt_template}"
-    if args.save_probabilities:
-        run_name += "_PROBS"
-    if args.run_descr:
-        run_name += str(args.run_descr)
-    run_dir = join(args.local_logging_dir, run_name)
+            run_name += "_BIN"
+        if args.bin_lab_results_abnormal:
+            run_name += "_BINABNORMAL"
+        if not args.summarize:
+            run_name += "_NOSUMMARY"
+        if args.confirm_diagnosis:
+            run_name += "_CONFIRM"
+        if not args.abbreviated:
+            run_name += "_NOABBR"
+        if args.self_consistency:
+            run_name += "_SELFCONSISTENCY"
+        if prompt_template != FULL_INFO_TEMPLATE:
+            run_name += f"_{args.prompt_template}"
+        if args.save_probabilities:
+            run_name += "_PROBS"
+        if args.run_descr:
+            run_name += str(args.run_descr)
+    run_dir = join(args.paths.local_logging_dir, run_name)
 
     os.makedirs(run_dir, exist_ok=True)
 
@@ -245,14 +273,14 @@ def run(args: DictConfig):
     # os.environ["LANGCHAIN_PROJECT"] = run_name
 
     # Load lab test mapping
-    with open(args.lab_test_mapping_path, "rb") as f:
+    with open(args.paths.lab_test_mapping_path, "rb") as f:
         lab_test_mapping_df = pickle.load(f)
 
     # Load patient data
     # for patho in ["appendicitis", "cholecystitis", "diverticulitis", "pancreatitis"]:
     patho = args.pathology
     hadm_info_clean = load_hadm_from_file(
-        f"{patho}_hadm_info_first_diag", base_mimic=args.base_mimic
+        f"{patho}_hadm_info_first_diag", base_mimic=args.paths.base_mimic
     )
 
     # Load list of specific IDs if provided
@@ -261,13 +289,29 @@ def run(args: DictConfig):
         with open(args.patient_list_path, "rb") as f:
             patient_list = pickle.load(f)
 
+    completed_ids = set()
+    if os.path.exists(results_log_path):
+        for record in read_from_pickle_file(results_log_path):
+            completed_ids.update(record.keys())
+        logger.info(f"Resuming: found {len(completed_ids)} already-completed patients")
+
     first_patient_seen = False
+    patients_processed = len(completed_ids)
     for _id in patient_list:
         if args.first_patient and not first_patient_seen:
             if _id == args.first_patient:
                 first_patient_seen = True
             else:
                 continue
+
+        if _id in completed_ids:
+            logger.debug(f"Skipping already-completed patient: {_id}")
+            continue
+
+        if args.max_patients and patients_processed >= args.max_patients:
+            logger.info(f"Reached max_patients limit ({args.max_patients}). Stopping. Use max_patients=0 for unlimited.")
+            break
+
         logger.info(f"Processing patient: {_id}")
         hadm = hadm_info_clean[_id]
 
@@ -485,6 +529,9 @@ def run(args: DictConfig):
             )
         else:
             append_to_pickle_file(results_log_path, {_id: result})
+        patients_processed += 1
+
+    score_run_dir(run_dir, args.paths.base_mimic)
 
 
 def write_diagnostic_criteria(pathology, diag_crit_writer):
